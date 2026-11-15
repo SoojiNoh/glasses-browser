@@ -26,8 +26,10 @@
 <script>
 const $ = id => document.getElementById(id);
 const st = t => $('st').textContent = t;
-try { $('code').value = location.hash.slice(1) || localStorage.getItem('gb.code') || ''; } catch {}
-const code = () => $('code').value.replace(/\s/g, '').toLowerCase();
+const aikey = location.hash.startsWith('#aikey=') ? location.hash.slice(7) : '';
+try { $('code').value = (!aikey && location.hash.slice(1)) || localStorage.getItem('gb.code') || ''; } catch {}
+if (aikey) { $('go').insertAdjacentHTML('afterend', '<button id="sendkey" style="margin-left:8px">🔑 AI 키 보내기</button>'); $('sendkey').onclick = () => send({ t: 'aikey', v: aikey }); history.replaceState(null, '', location.pathname); }
+const code = () => $('code').value.replace(/[\s"]/g, '').toLowerCase();
 async function send(m) {
   const c = code();
   if (c.length !== 8) return st('코드 8자리를 먼저 넣으세요.');

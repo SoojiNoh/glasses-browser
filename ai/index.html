@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>안경 AI</title>
+<style>
+  :root { --fs: 26px; --accent: #D97757; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #000; color: #fff; font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; }
+  body { width: 600px; max-width: 100vw; min-height: 600px; padding: 14px; font-size: var(--fs); line-height: 1.45; }
+  .row { display: flex; gap: 8px; margin: 6px 0; }
+  button { background: #222; color: #fff; border: 2px solid #444; border-radius: 12px; font-size: 22px; padding: 6px 12px; cursor: pointer; }
+  button.on { border-color: var(--accent); color: var(--accent); }
+  :focus { outline: 4px solid var(--accent); outline-offset: 2px; }
+  textarea { width: 100%; height: 90px; font-size: 24px; padding: 8px; border-radius: 12px; border: 2px solid #555; background: #111; color: #fff; }
+  #warn { color: #aaa; font-size: 16px; }
+  #msg { color: #ffb36b; font-size: 18px; min-height: 1em; }
+  #ans { white-space: pre-wrap; }
+  #pos { color: #aaa; font-size: 18px; }
+</style>
+</head>
+<body>
+<div class="row"><button id="claude">Claude</button><button id="gpt">GPT</button><button id="new">새 대화</button></div>
+<div id="warn">학생 이름·성적 같은 개인정보는 보내지 마세요.</div>
+<textarea id="q" placeholder="질문 (손글씨·받아쓰기, 또는 폰 자판)"></textarea>
+<div class="row"><button id="send" style="flex:1">보내기</button></div>
+<div id="msg" role="status"></div>
+<div id="pos"></div>
+<div id="ans" tabindex="0"></div>
+<div class="row"><button id="prev">◀</button><button id="next">▶</button></div>
+<script>
+const $ = id => document.getElementById(id), RELAY = 'https://ntfy.sh/';
+const get = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const put = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { say('저장 실패'); } };
+const say = t => $('msg').textContent = t;
+const b64 = b => btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64 = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+let model = get('ai.model', 'claude'), hist = get('ai.hist', []), pages = [], pg = 0, key, topic, es, waiting = null;
+
+async function setPair(s) {
+  const [t, k] = s.split('.'); if (!t || !k) return say('키 형식이 틀림');
+  put('ai.pair', s); await init();
+}
+async function init() {
+  const pair = get('ai.pair', null);
+  if (!pair) return say('🔑 처음 한 번: 폰 입력 페이지로 AI 키를 보내 주세요 (중계 프로그램이 알려 준 링크).');
+  [topic] = pair.split('.');
+  key = await crypto.subtle.importKey('raw', unb64(pair.split('.')[1]), 'AES-GCM', false, ['encrypt', 'decrypt']);
+  if (es) es.close();
+  es = new EventSource(RELAY + topic + '/sse');
+  es.onopen = () => say('연결됨 — 질문을 보내세요.');
+  es.onerror = () => say('중계 연결 끊김 — 다시 잇는 중…');
+  es.onmessage = async ev => {
+    const m = JSON.parse(ev.data).message || '';
+    if (!m.startsWith('A:')) return;
+    try {
+      const [iv, ct] = m.slice(2).split('.');
+      const r = JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv) }, key, unb64(ct))));
+      if (r.id !== waiting) return;
+      waiting = null; hist.push({ r: 'a', t: r.a }); hist = hist.slice(-6); put('ai.hist', hist);
+      showAnswer(r.a); say('');
+    } catch { /* 다른 키의 글은 무시 */ }
+  };
+}
+function showAnswer(t) {
+  pages = []; let cur = '';
+  for (const part of t.split(/(?<=[.!?。\n])\s*/)) { if ((cur + part).length > 220 && cur) { pages.push(cur); cur = ''; } cur += part + ' '; }
+  if (cur.trim()) pages.push(cur); pg = 0; drawPage(); $('next').focus();
+}
+function drawPage() { $('ans').textContent = pages[pg] || ''; $('pos').textContent = pages.length ? `답 ${pg + 1}/${pages.length}` : ''; }
+function turn(d) { if (pages[pg + d] != null) { pg += d; drawPage(); } }
+async function send() {
+  const q = $('q').value.trim(); if (!q) return;
+  if (!key) return say('🔑 AI 키가 아직 없습니다.');
+  const id = Math.random().toString(36).slice(2, 10); waiting = id;
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify({ id, model, q, history: hist })));
+  try {
+    const r = await fetch(RELAY + topic, { method: 'POST', body: 'Q:' + b64(iv) + '.' + b64(new Uint8Array(ct)) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+  } catch (e) { waiting = null; return say('⚠ 보내기 실패: ' + e.message); }
+  hist.push({ r: 'q', t: q }); hist = hist.slice(-6); put('ai.hist', hist);
+  $('q').value = ''; pages = []; drawPage(); say((model === 'gpt' ? 'GPT' : 'Claude') + ' 생각 중…');
+}
+function setModel(m) { model = m; put('ai.model', m); $('claude').className = m === 'claude' ? 'on' : ''; $('gpt').className = m === 'gpt' ? 'on' : ''; }
+$('claude').onclick = () => setModel('claude'); $('gpt').onclick = () => setModel('gpt');
+$('new').onclick = () => { hist = []; put('ai.hist', hist); pages = []; drawPage(); say('새 대화'); };
+$('send').onclick = send; $('prev').onclick = () => turn(-1); $('next').onclick = () => turn(1);
+$('q').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } });
+addEventListener('keydown', e => { if (document.activeElement === $('ans') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); turn(e.key === 'ArrowLeft' ? -1 : 1); } }, true);
+// 폰 자판(브라우저와 같은 8자리 코드)으로 질문 입력·AI 키 받기
+const code = get('gb.code', null);
+if (code) {
+  const pe = new EventSource(RELAY + 'gb-' + code + '/sse');
+  pe.onmessage = ev => {
+    let m; try { m = JSON.parse(JSON.parse(ev.data).message); } catch { return; }
+    if (m.t === 'aikey') setPair(m.v);
+    else if (m.t === 'text') $('q').value = m.v;
+    else if (m.t === 'go') { $('q').value = m.v; send(); }
+  };
+}
+setModel(model); init();
+</script>
+</body>
+</html>
