@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RL 노트 안경판</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  :root { --fs: 26px; --accent: #D97757; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #000; color: #fff; font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; }
+  body { width: 600px; max-width: 100vw; min-height: 600px; padding: 14px; font-size: var(--fs); line-height: 1.45; }
+  #bar { display: flex; gap: 8px; margin-bottom: 8px; }
+  button { background: #222; color: #fff; border: 2px solid #444; border-radius: 12px; font-size: 22px; padding: 6px 12px; cursor: pointer; }
+  :focus { outline: 4px solid var(--accent); outline-offset: 2px; }
+  h1, h2 { font-size: 1.05em; color: var(--accent); margin: .2em 0 .4em; }
+  .item { display: block; width: 100%; text-align: left; margin: 6px 0; font-size: 22px; }
+  #pos { color: #aaa; font-size: 18px; }
+  #msg { color: #ffb36b; font-size: 18px; min-height: 1em; }
+  .cap { font-size: .8em; color: #ddd; border-left: 3px solid #555; padding-left: 8px; margin: 6px 0; }
+  input { width: 100%; font-size: 24px; padding: 8px; border-radius: 12px; border: 2px solid #555; background: #111; color: #fff; }
+  .nav { display: flex; gap: 8px; margin-top: 10px; } .nav button { flex: 1; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <button id="list" aria-label="목록">☰ 목록</button>
+  <button id="find" aria-label="찾기">🔎</button>
+  <button id="smaller">A−</button><button id="bigger">A+</button>
+</div>
+<div id="msg" role="status"></div>
+<main id="view"></main>
+<script>
+const $ = id => document.getElementById(id), view = $('view');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const get = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const put = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { $('msg').textContent = '저장 실패'; } };
+let notes = [], st = {}, fs = get('rl.fs', 26), caps = {};
+const setFs = () => document.documentElement.style.setProperty('--fs', fs + 'px'); setFs();
+const math = el => { try { renderMathInElement(el, { delimiters: [{ left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false }], throwOnError: false }); } catch {} };
+
+function go(s, push = true) { st = s; if (push) history.pushState(s, '', '#' + encodeURIComponent(JSON.stringify(s))); draw(); }
+async function draw() {
+  $('msg').textContent = '';
+  if (st.v === 'note') return drawPage();
+  if (st.v === 'find') return drawFind();
+  const last = get('rl.last', {});
+  view.innerHTML = '<h1>강화학습 노트</h1>' + notes.map((n, i) =>
+    `<button class="item" data-n="${i}">${last[i] != null ? '▶ ' : ''}${esc(n.n)}</button>`).join('');
+  view.querySelector('.item').focus();
+}
+async function drawPage() {
+  const n = notes[st.n], p = Math.max(0, Math.min(st.p || 0, n.i.length - 1)); st.p = p;
+  const last = get('rl.last', {}); last[st.n] = p; put('rl.last', last);
+  const [t, title, text] = n.i[p], next = (n.i[p + 1] || [Infinity])[0];
+  let capHtml = '';
+  if (st.cap && n.c) {
+    try { caps[n.c] = caps[n.c] || await (await fetch('captions/' + n.c + '.json')).json(); } catch { $('msg').textContent = '자막을 못 불러옴'; }
+    capHtml = (caps[n.c] || []).filter(c => c[0] >= t && c[0] < next).map(c => `<p class="cap">${esc(c[1])}</p>`).join('') || '<p class="cap">이 쪽 자막 없음</p>';
+  }
+  view.innerHTML = `<div id="pos">${esc(n.n)} · ${p + 1}/${n.i.length}</div><h2>${esc(title)}</h2><p>${esc(text)}</p>${capHtml}
+    <div class="nav"><button id="prev">◀ 이전</button>${n.c ? `<button id="cap">${st.cap ? '자막 닫기' : '자막'}</button>` : ''}<button id="next">다음 ▶</button></div>`;
+  math(view);
+  $('prev').onclick = () => turn(-1); $('next').onclick = () => turn(1);
+  if ($('cap')) $('cap').onclick = () => go({ ...st, cap: !st.cap }, false);
+  $('next').focus();
+}
+function turn(d) { const n = notes[st.n]; const p = st.p + d; if (p < 0 || p >= n.i.length) return $('msg').textContent = d < 0 ? '첫 쪽' : '마지막 쪽'; go({ ...st, p }, false); }
+function drawFind() {
+  view.innerHTML = '<h1>찾기</h1><form id="f"><input id="q" type="search" value="' + esc(st.q || '') + '"></form><div id="r"></div>';
+  const run = () => {
+    const q = $('q').value.trim(); st.q = q; if (!q) return $('r').innerHTML = '';
+    const hits = [];
+    notes.forEach((n, ni) => n.i.forEach((it, pi) => { if (hits.length < 30 && (it[1] + ' ' + it[2]).includes(q)) hits.push(`<button class="item" data-n="${ni}" data-p="${pi}">${esc(it[1])}<br><small style="color:#aaa">${esc(n.n)}</small></button>`); }));
+    $('r').innerHTML = hits.join('') || '<p>없음</p>'; math($('r'));
+  };
+  $('f').onsubmit = e => { e.preventDefault(); run(); };
+  $('q').oninput = run; run(); $('q').focus();
+}
+view.addEventListener('click', e => { const b = e.target.closest('[data-n]'); if (b) go({ v: 'note', n: +b.dataset.n, p: b.dataset.p != null ? +b.dataset.p : (get('rl.last', {})[b.dataset.n] || 0) }); });
+// 쪽 화면에서는 밴드 좌우 = 쪽 넘김
+addEventListener('keydown', e => { if (st.v === 'note' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); turn(e.key === 'ArrowLeft' ? -1 : 1); } }, true);
+$('list').onclick = () => go({ v: 'list' });
+$('find').onclick = () => go({ v: 'find' });
+$('bigger').onclick = () => { fs = Math.min(44, fs + 2); setFs(); put('rl.fs', fs); };
+$('smaller').onclick = () => { fs = Math.max(18, fs - 2); setFs(); put('rl.fs', fs); };
+addEventListener('popstate', e => { st = e.state || { v: 'list' }; draw(); });
+fetch('notes.json').then(r => r.json()).then(d => {
+  notes = d;
+  try { st = JSON.parse(decodeURIComponent(location.hash.slice(1))); } catch { st = { v: 'list' }; }
+  history.replaceState(st, '', location.hash || '#'); draw();
+}).catch(e => view.textContent = '노트를 못 불러옴: ' + e.message);
+</script>
+</body>
+</html>
