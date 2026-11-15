@@ -75,8 +75,8 @@ function draw(list) {
 $('res').onclick = e => { const b = e.target.closest('[data-id]'); if (b) play(b.dataset.id); };
 // 내 계정 목록(인기·좋아요·구독 새 영상): 드라이브·클래스룸과 같은 Apps Script 주소에서 받음
 async function feed(kind) {
-  const cfg = get('gd.cfg', null);
-  if (!cfg) return say('먼저 「드라이브·클래스룸」 설정(휴대폰 「📁 드라이브 설정 보내기」)이 필요합니다.');
+  const cfg = get('yt.cfg', null) || get('gd.cfg', null);   // 유튜브 계정용 Apps Script 가 따로 있으면 그것을
+  if (!cfg) return say('먼저 휴대폰 입력 페이지에서 「📺 유튜브 계정 설정 보내기」를 눌러 주세요.');
   say('불러오는 중…');
   try {
     const d = await (await fetch(cfg.u + (cfg.u.includes('?') ? '&' : '?') + 'k=' + encodeURIComponent(cfg.k))).json();
@@ -118,6 +118,7 @@ if (code) {
   const pe = new EventSource(RELAY + 'gb-' + code + '/sse');
   pe.onmessage = ev => {
     let m; try { m = JSON.parse(JSON.parse(ev.data).message); } catch { return; }
+    if (m.t === 'ytgas') { const [u, k] = m.v.split('|'); if (/^https:\/\/script\.google\.com\//.test(u) && k) { put('yt.cfg', { u, k }); say('유튜브 계정 설정 받음'); } return; }
     if (m.t === 'text') $('q').value = m.v;
     else if (m.t === 'go' && m.v.trim()) { $('q').value = m.v; search(m.v.trim()); }
   };

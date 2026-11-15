@@ -31,6 +31,8 @@ const aikey = location.hash.startsWith('#aikey=') ? location.hash.slice(7) : '';
 try { $('code').value = (!aikey && location.hash.slice(1)) || localStorage.getItem('gb.code') || ''; } catch {}
 const gas = location.hash.startsWith('#gas=') ? location.hash.slice(5) : '';
 if (gas) { $('go').insertAdjacentHTML('afterend', '<button id="sendgas" style="margin-left:8px">📁 드라이브 설정 보내기</button>'); $('sendgas').onclick = () => send({ t: 'gas', v: decodeURIComponent(gas) }); history.replaceState(null, '', location.pathname); if (!$('code').value) try { $('code').value = localStorage.getItem('gb.code') || ''; } catch {} }
+const ytgas = location.hash.startsWith('#ytgas=') ? location.hash.slice(7) : '';
+if (ytgas) { $('go').insertAdjacentHTML('afterend', '<button id="sendyt" style="margin-left:8px">📺 유튜브 계정 설정 보내기</button>'); $('sendyt').onclick = () => send({ t: 'ytgas', v: decodeURIComponent(ytgas) }); history.replaceState(null, '', location.pathname); }
 if (aikey) { $('go').insertAdjacentHTML('afterend', '<button id="sendkey" style="margin-left:8px">🔑 AI 키 보내기</button>'); $('sendkey').onclick = () => send({ t: 'aikey', v: aikey }); history.replaceState(null, '', location.pathname); }
 const code = () => $('code').value.replace(/[\s"]/g, '').toLowerCase();
 async function send(m) {
