@@ -146,5 +146,7 @@ if (code) {
 }
 drawLib();
 </script>
+<script src="../hold.js"></script>
+<script>Hold.step = d => { if (!cur) return Hold.scroll(d); if (cur.k === 'epub') { turn(d); return true; } const p = cur.at; turn(d); return cur.at !== p; };</script>
 </body>
 </html>

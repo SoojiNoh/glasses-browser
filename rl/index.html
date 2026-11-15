@@ -100,5 +100,7 @@ fetch('notes.json').then(r => r.json()).then(d => {
   history.replaceState(st, '', location.hash || '#'); draw();
 }).catch(e => view.textContent = '노트를 못 불러옴: ' + e.message);
 </script>
+<script src="../hold.js"></script>
+<script>Hold.step = d => { if (st.v !== 'note') return Hold.scroll(d); const p = st.p; turn(d); return st.p !== p; };</script>
 </body>
 </html>
