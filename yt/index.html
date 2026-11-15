@@ -18,11 +18,13 @@
   .v small { display: block; color: #aaa; font-size: 16px; }
   .ctl { display: flex; gap: 6px; margin-top: 8px; } .ctl button { flex: 1; padding: 6px 0; }
   #msg { color: #ffb36b; font-size: 18px; min-height: 1em; margin: 6px 0; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 8px; } .tabs button { flex: 1; font-size: 19px; }
   #pl { width: 572px; max-width: 100%; aspect-ratio: 16/9; background: #111; }
 </style>
 </head>
 <body>
 <div id="list">
+  <div class="tabs"><button data-feed="popular">🔥 인기</button><button data-feed="liked">👍 좋아요</button><button data-feed="subs">📺 구독</button></div>
   <form id="f"><input id="q" type="search" placeholder="유튜브 검색 (손글씨·받아쓰기·폰 자판)"><button>🔎</button></form>
   <div id="msg" role="status"></div>
   <div id="res"></div>
@@ -71,6 +73,20 @@ function draw(list) {
   const b = $('res').querySelector('button'); if (b) b.focus();
 }
 $('res').onclick = e => { const b = e.target.closest('[data-id]'); if (b) play(b.dataset.id); };
+// 내 계정 목록(인기·좋아요·구독 새 영상): 드라이브·클래스룸과 같은 Apps Script 주소에서 받음
+async function feed(kind) {
+  const cfg = get('gd.cfg', null);
+  if (!cfg) return say('먼저 「드라이브·클래스룸」 설정(휴대폰 「📁 드라이브 설정 보내기」)이 필요합니다.');
+  say('불러오는 중…');
+  try {
+    const d = await (await fetch(cfg.u + (cfg.u.includes('?') ? '&' : '?') + 'k=' + encodeURIComponent(cfg.k))).json();
+    const list = ((d.yt || {})[kind] || []).map(v => ({ id: v.id, t: v.t + (v.ch ? ' · ' + v.ch : ''), d: dur(v.d) }));
+    put('yt.last', list); draw(list);
+    say(list.length ? '' : (d.yt && d.yt.err ? '⚠ ' + d.yt.err : '목록이 비었습니다'));
+  } catch (e) { say('⚠ 불러오기 실패: ' + e.message); }
+}
+function dur(iso) { const m = String(iso || '').match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/); if (!m) return ''; const [h, mi, se] = [m[1], m[2] || 0, m[3] || 0].map(x => +x || 0); return (h ? h + ':' + String(mi).padStart(2, '0') : mi) + ':' + String(se).padStart(2, '0'); }
+document.querySelector('.tabs').onclick = e => { const b = e.target.closest('[data-feed]'); if (b) feed(b.dataset.feed); };
 $('f').onsubmit = e => { e.preventDefault(); if ($('q').value.trim()) search($('q').value.trim()); };
 
 window.onYouTubeIframeAPIReady = () => {
