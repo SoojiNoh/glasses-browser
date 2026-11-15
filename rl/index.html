@@ -22,6 +22,9 @@
   .cap { font-size: .8em; color: #ddd; border-left: 3px solid #555; padding-left: 8px; margin: 6px 0; }
   input { width: 100%; font-size: 24px; padding: 8px; border-radius: 12px; border: 2px solid #555; background: #111; color: #fff; }
   .nav { display: flex; gap: 8px; margin-top: 10px; } .nav button { flex: 1; }
+  .sl { display: block; width: 100%; max-height: 250px; object-fit: contain; background: #fff; border-radius: 8px; margin: 4px 0 8px; cursor: zoom-in; }
+  .sl.zoom { max-height: none; cursor: zoom-out; }
+  .ser { margin: 14px 0 4px; font-size: 20px; color: #ffb36b; }
 </style>
 </head>
 <body>
@@ -47,8 +50,11 @@ async function draw() {
   if (st.v === 'note') return drawPage();
   if (st.v === 'find') return drawFind();
   const last = get('rl.last', {});
-  view.innerHTML = '<h1>강화학습 노트</h1>' + notes.map((n, i) =>
-    `<button class="item" data-n="${i}">${last[i] != null ? '▶ ' : ''}${esc(n.n)}</button>`).join('');
+  let prev = '';
+  view.innerHTML = '<h1>rl-notes 전체</h1>' + notes.map((n, i) => {
+    const head = n.s !== prev ? `<div class="ser">${esc(n.s)} · ${notes.filter(x => x.s === n.s).length}강</div>` : ''; prev = n.s;
+    return head + `<button class="item" data-n="${i}">${last[i] != null ? '▶ ' : ''}${esc(n.n)}</button>`;
+  }).join('');
   view.querySelector('.item').focus();
 }
 async function drawPage() {
@@ -60,9 +66,10 @@ async function drawPage() {
     try { caps[n.c] = caps[n.c] || await (await fetch('captions/' + n.c + '.json')).json(); } catch { $('msg').textContent = '자막을 못 불러옴'; }
     capHtml = (caps[n.c] || []).filter(c => c[0] >= t && c[0] < next).map(c => `<p class="cap">${esc(c[1])}</p>`).join('') || '<p class="cap">이 쪽 자막 없음</p>';
   }
-  view.innerHTML = `<div id="pos">${esc(n.n)} · ${p + 1}/${n.i.length}</div><h2>${esc(title)}</h2><p>${esc(text)}</p>${capHtml}
+  view.innerHTML = `<div id="pos">${esc(n.n)} · ${p + 1}/${n.i.length}</div><h2>${esc(title)}</h2>${n.p && n.p[p] ? `<img class="sl" id="sl" alt="슬라이드" tabindex="0" src="https://rl-notes.web.app/${n.d}/${n.p[p]}">` : ''}<p>${esc(text)}</p>${capHtml}
     <div class="nav"><button id="prev">◀ 이전</button>${n.c ? `<button id="cap">${st.cap ? '자막 닫기' : '자막'}</button>` : ''}<button id="next">다음 ▶</button></div>`;
   math(view);
+  if ($('sl')) $('sl').onclick = () => $('sl').classList.toggle('zoom');
   $('prev').onclick = () => turn(-1); $('next').onclick = () => turn(1);
   if ($('cap')) $('cap').onclick = () => go({ ...st, cap: !st.cap }, false);
   $('next').focus();
