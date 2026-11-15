@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>드라이브·클래스룸</title>
+<style>
+  :root { --accent: #D97757; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #000; color: #fff; font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; }
+  body { width: 600px; max-width: 100vw; min-height: 600px; padding: 14px; font-size: 24px; line-height: 1.4; }
+  .row { display: flex; gap: 8px; margin-bottom: 8px; }
+  button { background: #222; color: #fff; border: 2px solid #444; border-radius: 12px; font-size: 22px; padding: 6px 12px; cursor: pointer; }
+  button.on { border-color: var(--accent); color: var(--accent); }
+  :focus { outline: 4px solid var(--accent); outline-offset: 2px; }
+  .it { display: block; padding: 6px 10px; margin: 6px 0; border: 2px solid #333; border-radius: 12px; }
+  .it small { display: block; color: #aaa; font-size: 16px; }
+  h2 { font-size: 20px; color: #ffb36b; margin: 12px 0 4px; }
+  #msg { color: #ffb36b; font-size: 18px; min-height: 1em; }
+</style>
+</head>
+<body>
+<div class="row"><button id="tdrive">📁 드라이브</button><button id="tclass">📚 클래스룸</button><button id="re">⟳</button></div>
+<div id="msg" role="status"></div>
+<main id="view"></main>
+<script>
+const $ = id => document.getElementById(id), RELAY = 'https://ntfy.sh/';
+const get = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const put = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { say('저장 실패'); } };
+const say = t => $('msg').textContent = t;
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const day = t => t ? new Date(t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+let tab = get('gd.tab', 'drive'), data = get('gd.cache', null);
+
+function draw() {
+  $('tdrive').className = tab === 'drive' ? 'on' : ''; $('tclass').className = tab === 'class' ? 'on' : '';
+  if (!data) return $('view').innerHTML = '';
+  $('view').innerHTML = tab === 'drive'
+    ? (data.drive || []).map(f => `<div class="it" tabindex="0">${esc(f.n)}<small>${day(f.t)}</small></div>`).join('') || '<p>파일 없음</p>'
+    : (data.classroomError ? `<p>클래스룸 오류: ${esc(data.classroomError)}</p>` : '') +
+      (data.classroom || []).map(c => `<h2>${esc(c.c)}</h2>` + c.items.map(i => `<div class="it" tabindex="0">${i.k} · ${esc(i.n)}<small>${i.due ? '마감 ' + i.due + ' · ' : ''}${day(i.t)}</small></div>`).join('')).join('');
+  const f = $('view').querySelector('.it'); if (f) f.focus();
+}
+async function load() {
+  const cfg = get('gd.cfg', null);
+  if (!cfg) return say('처음 한 번: 휴대폰 입력 페이지에서 「📁 드라이브 설정 보내기」를 눌러 주세요.');
+  say('불러오는 중…');
+  try {
+    const r = await fetch(cfg.u + (cfg.u.includes('?') ? '&' : '?') + 'k=' + encodeURIComponent(cfg.k));
+    const d = await r.json();
+    if (!d.at) throw new Error('빈 응답 — 토큰이 맞는지 확인');
+    data = d; put('gd.cache', d); say('갱신 ' + day(d.at)); draw();
+  } catch (e) { say('⚠ 불러오기 실패: ' + e.message + (data ? ' (이전 목록 표시 중)' : '')); }
+}
+$('tdrive').onclick = () => { tab = 'drive'; put('gd.tab', tab); draw(); };
+$('tclass').onclick = () => { tab = 'class'; put('gd.tab', tab); draw(); };
+$('re').onclick = load;
+// 휴대폰 입력 페이지(같은 8자리 코드)로 설정 받기: "주소|토큰"
+const code = get('gb.code', null);
+if (code) {
+  const pe = new EventSource(RELAY + 'gb-' + code + '/sse');
+  pe.onmessage = ev => {
+    let m; try { m = JSON.parse(JSON.parse(ev.data).message); } catch { return; }
+    if (m.t !== 'gas') return;
+    const [u, k] = m.v.split('|');
+    if (!/^https:\/\/script\.google\.com\//.test(u) || !k) return say('설정 형식이 틀림');
+    put('gd.cfg', { u, k }); say('설정 받음'); load();
+  };
+} else say('먼저 안경 브라우저의 「폰」 단추로 휴대폰을 한 번 연결해 주세요.');
+draw(); load();
+</script>
+</body>
+</html>
