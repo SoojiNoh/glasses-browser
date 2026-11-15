@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>안경 브라우저</title>
+<style>
+  :root { --fs: 26px; --accent: #D97757; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #000; color: #fff; font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; }
+  body { width: 600px; max-width: 100vw; min-height: 600px; padding: 14px; font-size: var(--fs); line-height: 1.45; }
+  #bar { display: flex; gap: 8px; position: sticky; top: 0; background: #000; padding-bottom: 8px; z-index: 2; }
+  button, a { cursor: pointer; }
+  button { background: #222; color: #fff; border: 2px solid #444; border-radius: 12px; font-size: 22px; padding: 6px 12px; }
+  :focus { outline: 4px solid var(--accent); outline-offset: 2px; }
+  #q { width: 100%; font-size: 26px; padding: 10px; border-radius: 12px; border: 2px solid #555; background: #111; color: #fff; }
+  h1, h2, h3 { font-size: 1.15em; margin: .6em 0 .3em; color: var(--accent); }
+  p, li, .blk { margin: .35em 0; }
+  a { color: #8cc8ff; }
+  .res { display: block; padding: 8px 10px; margin: 8px 0; border: 2px solid #333; border-radius: 12px; text-decoration: none; }
+  .res small { display: block; color: #aaa; font-size: .65em; word-break: break-all; }
+  #msg { color: #ffb36b; font-size: 20px; min-height: 1em; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row .res { flex: 1; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <button id="back" aria-label="뒤로">←</button>
+  <button id="home" aria-label="처음">🏠</button>
+  <button id="star" aria-label="즐겨찾기">☆</button>
+  <button id="smaller" aria-label="글자 작게">A−</button>
+  <button id="bigger" aria-label="글자 크게">A+</button>
+</div>
+<div id="msg" role="status"></div>
+<main id="view"></main>
+
+<script>
+// ponytail: 페이지 읽기·검색은 r.jina.ai(무료·키 없음, 분당 요청 수 제한) 경유. 막히면 Cloudflare Worker 로 교체.
+const READER = 'https://r.jina.ai/';
+const SEARCH = q => 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q);
+const $ = id => document.getElementById(id);
+const view = $('view'), msg = $('msg');
+
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+  set(k, v) {
+    try {
+      const old = localStorage.getItem(k);
+      if (old) localStorage.setItem(k + '.bak', old);   // 직전 값 보관
+      localStorage.setItem(k, JSON.stringify(v));
+    } catch (e) { say('저장 실패: ' + e.message); }
+  }
+};
+let favs = store.get('gb.favs', []);
+let fs = store.get('gb.fs', 26);
+const applyFs = () => document.documentElement.style.setProperty('--fs', fs + 'px');
+applyFs();
+
+function say(t) { msg.textContent = t || ''; }
+const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function realUrl(u) {           // DDG 이동 링크 → 원래 주소
+  try { const x = new URL(u, 'https://duckduckgo.com'); const g = x.searchParams.get('uddg'); return g || u; } catch { return u; }
+}
+function isAd(u) { return /y\.js\?ad_domain|ad_provider=/.test(u); }
+
+async function fetchMd(url) {
+  say('불러오는 중…');
+  url = url.replace(/^https?:\/\/blog\.naver\.com\//, 'https://m.blog.naver.com/');  // PC 블로그는 본문이 iframe 안
+  const r = await fetch(READER + url, { headers: { 'X-Retain-Images': 'none' } });
+  if (!r.ok) throw new Error('읽기 서버 ' + r.status + (r.status === 429 ? ' (요청이 많음 — 잠시 뒤 다시)' : ''));
+  return r.text();
+}
+
+function inline(s) {
+  s = esc(s).replace(/!\[[^\]]*\]\([^)]*\)/g, '');
+  return s.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g,
+    (m, t, u) => isAd(u) ? '' : `<a href="#" data-u="${esc(realUrl(u.replace(/&amp;/g, '&')))}">${t}</a>`);
+}
+
+function mdToHtml(md) {
+  const body = md.split('Markdown Content:').pop();
+  const out = [];
+  for (let line of body.split('\n')) {
+    line = line.trim();
+    if (!line || /^\[\]\(/.test(line) || /^[-=*_]{3,}$/.test(line)) continue;
+    const h = line.match(/^(#{1,6})\s+(.*)/);
+    const html = inline(h ? h[2] : line.replace(/^[-*+]\s+/, '• '));
+    if (!html.replace(/<[^>]+>/g, '').trim()) continue;
+    out.push(h ? `<h2 tabindex="0">${html}</h2>` : `<p class="blk" tabindex="0">${html}</p>`);
+  }
+  return out.join('') || '<p>읽을 글이 없습니다.</p>';
+}
+
+function searchHtml(md) {
+  const out = [];
+  for (const m of md.matchAll(/^##\s+\[([^\]]+)\]\(([^)\s]+)\)/gm)) {
+    if (isAd(m[2])) continue;
+    const u = realUrl(m[2]);
+    out.push(`<a class="res" href="#" data-u="${esc(u)}">${esc(m[1])}<small>${esc(u)}</small></a>`);
+  }
+  return out.join('') || '<p>검색 결과가 없습니다.</p>';
+}
+
+function toTarget(input) {
+  input = input.trim();
+  if (/^https?:\/\//i.test(input)) return { kind: 'page', u: input };
+  if (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(input)) return { kind: 'page', u: 'https://' + input };
+  return { kind: 'search', q: input };
+}
+
+let current = null;
+async function show(state, push = true) {
+  if (push) history.pushState(state, '', '#' + encodeURIComponent(JSON.stringify(state)));
+  current = state;
+  $('star').textContent = state.kind === 'page' && favs.some(f => f.u === state.u) ? '★' : '☆';
+  if (state.kind === 'home') return renderHome();
+  try {
+    if (state.kind === 'search') {
+      view.innerHTML = `<h2>🔎 ${esc(state.q)}</h2>` + searchHtml(await fetchMd(SEARCH(state.q)));
+    } else {
+      const md = await fetchMd(state.u);
+      const title = (md.match(/^Title:\s*(.*)$/m) || [, state.u])[1];
+      state.t = title;
+      view.innerHTML = `<h1 tabindex="0">${esc(title)}</h1>` + mdToHtml(md);
+    }
+    say('');
+    window.scrollTo(0, 0);
+    (view.querySelector('a, [tabindex]') || $('back')).focus();
+  } catch (e) {
+    say('⚠ ' + e.message);
+    view.innerHTML = '<p>열지 못했습니다. ← 로 돌아가거나 다시 시도하세요.</p>';
+  }
+}
+
+function renderHome() {
+  view.innerHTML = `
+    <label for="q">주소 또는 검색어</label>
+    <form id="f"><input id="q" type="search" enterkeyhint="go" autocomplete="off"></form>
+    <h2>즐겨찾기</h2>
+    ${favs.length ? favs.map((f, i) => `<div class="row"><a class="res" href="#" data-u="${esc(f.u)}">${esc(f.t || f.u)}<small>${esc(f.u)}</small></a><button data-del="${i}" aria-label="지우기">✕</button></div>`).join('') : '<p>아직 없습니다. 페이지에서 ☆ 를 누르세요.</p>'}`;
+  $('f').onsubmit = e => { e.preventDefault(); const v = $('q').value; if (v.trim()) show(toTarget(v)); };
+  $('q').focus();
+}
+
+view.addEventListener('click', e => {
+  const a = e.target.closest('[data-u]');
+  if (a) { e.preventDefault(); return show({ kind: 'page', u: a.dataset.u }); }
+  const d = e.target.closest('[data-del]');
+  if (d) { favs.splice(+d.dataset.del, 1); store.set('gb.favs', favs); renderHome(); }
+});
+$('back').onclick = () => history.length > 1 ? history.back() : show({ kind: 'home' });
+$('home').onclick = () => show({ kind: 'home' });
+$('star').onclick = () => {
+  if (!current || current.kind !== 'page') return say('페이지에서만 즐겨찾기를 할 수 있습니다.');
+  const i = favs.findIndex(f => f.u === current.u);
+  if (i >= 0) favs.splice(i, 1); else favs.unshift({ u: current.u, t: current.t });
+  store.set('gb.favs', favs);
+  $('star').textContent = i >= 0 ? '☆' : '★';
+  say(i >= 0 ? '즐겨찾기에서 뺐습니다.' : '즐겨찾기에 넣었습니다.');
+};
+$('bigger').onclick = () => { fs = Math.min(44, fs + 2); applyFs(); store.set('gb.fs', fs); };
+$('smaller').onclick = () => { fs = Math.max(18, fs - 2); applyFs(); store.set('gb.fs', fs); };
+addEventListener('popstate', e => show(e.state || { kind: 'home' }, false));
+
+let start = { kind: 'home' };
+try { if (location.hash) start = JSON.parse(decodeURIComponent(location.hash.slice(1))); } catch {}
+history.replaceState(start, '', location.hash || '#');
+show(start, false);
+</script>
+</body>
+</html>
