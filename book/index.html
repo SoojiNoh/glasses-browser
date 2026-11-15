@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>안경 책장</title>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<style>
+  :root { --fs: 26px; --accent: #D97757; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #000; color: #fff; font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; }
+  body { width: 600px; max-width: 100vw; min-height: 600px; padding: 14px; font-size: 22px; line-height: 1.4; }
+  button { background: #222; color: #fff; border: 2px solid #444; border-radius: 12px; font-size: 20px; padding: 6px 10px; cursor: pointer; }
+  :focus { outline: 4px solid var(--accent); outline-offset: 2px; }
+  form { display: flex; gap: 8px; } input { flex: 1; font-size: 20px; padding: 8px; border-radius: 12px; border: 2px solid #555; background: #111; color: #fff; }
+  h2 { font-size: 18px; color: #ffb36b; margin: 12px 0 4px; }
+  .b { display: block; width: 100%; text-align: left; margin: 5px 0; }
+  .b small { color: #aaa; font-size: 15px; }
+  .row { display: flex; gap: 6px; } .row button { flex: 1; }
+  #msg { color: #ffb36b; font-size: 17px; min-height: 1em; margin: 4px 0; }
+  #area { width: 572px; max-width: 100%; height: 450px; overflow: hidden; }
+  #txt { font-size: var(--fs); line-height: 1.55; white-space: pre-wrap; }
+  #pdf { width: 100%; background: #fff; }
+  #pos { color: #aaa; font-size: 15px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="lib">
+  <form id="f"><input id="u" type="search" placeholder="책 주소(.epub·.pdf·.txt·글 페이지)"><button>열기</button></form>
+  <div id="msg" role="status"></div>
+  <h2>공개 도서</h2>
+  <div id="pub"></div>
+  <h2>내 책장</h2>
+  <div id="mine"></div>
+</div>
+<div id="read" hidden>
+  <div class="row"><button id="close">← 책장</button><button id="prev">◀</button><button id="next">▶</button><button id="sm">A−</button><button id="bg">A+</button></div>
+  <div id="area"></div>
+  <div id="pos"></div>
+</div>
+<script>
+// 책 파일은 IndexedDB, 목록·읽던 곳·글자 크기는 localStorage. 휴대폰에서 보낸 파일은 ntfy 첨부(최대 15MB, 3시간 뒤 서버에서 지워짐).
+const $ = id => document.getElementById(id), RELAY = 'https://ntfy.sh/', READER = 'https://r.jina.ai/';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const get = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const put = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { say('저장 실패'); } };
+const say = t => $('msg').textContent = t;
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+const PUB = [
+  ['운수 좋은 날 — 현진건', 'https://ko.wikisource.org/wiki/운수_좋은_날'],
+  ['메밀꽃 필 무렵 — 이효석', 'https://ko.wikisource.org/wiki/메밀꽃_필_무렵'],
+  ['Alice\'s Adventures in Wonderland', 'https://www.gutenberg.org/cache/epub/11/pg11.txt'],
+  ['Pride and Prejudice', 'https://www.gutenberg.org/cache/epub/1342/pg1342.txt'],
+];
+const db = new Promise((ok, no) => { const r = indexedDB.open('gbooks', 1); r.onupgradeneeded = () => r.result.createObjectStore('f'); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
+const idb = async (mode, fn) => { const d = await db; return new Promise((ok, no) => { const t = d.transaction('f', mode), q = fn(t.objectStore('f')); t.oncomplete = () => ok(q && q.result); t.onerror = () => no(t.error); }); };
+let books = get('bk.list', []), fs = get('bk.fs', 26), cur = null, rend = null, txtPages = [], pdfDoc = null, pdfTask = null;
+
+function drawLib() {
+  $('pub').innerHTML = PUB.map(([n, u]) => `<button class="b" data-u="${esc(u)}">${esc(n)}</button>`).join('');
+  $('mine').innerHTML = books.map((b, i) => `<div class="row"><button class="b" data-i="${i}" style="flex:6">${esc(b.n)} <small>${b.k.toUpperCase()}${b.at != null ? ' · 읽던 곳 있음' : ''}</small></button><button data-del="${i}">✕</button></div>`).join('') || '<p>아직 없습니다.</p>';
+}
+const kindOf = (name, type = '') => /\.epub$/i.test(name) || /epub/.test(type) ? 'epub' : /\.pdf$/i.test(name) || /pdf/.test(type) ? 'pdf' : 'txt';
+async function addBook(name, kind, data) {
+  const id = Date.now().toString(36);
+  await idb('readwrite', s => s.put(data, id));
+  books.unshift({ id, n: name, k: kind }); put('bk.list', books); drawLib(); return books[0];
+}
+async function openUrl(u) {
+  say('받는 중…');
+  try {
+    const k = kindOf(u);
+    if (k === 'txt') {
+      const r = await fetch(READER + u); if (!r.ok) throw new Error('읽기 서버 ' + r.status);
+      const md = await r.text(), title = (md.match(/^Title:\s*(.+)$/m) || [, ''])[1].trim();
+      const b = await addBook(title || decodeURIComponent(u.split('/').pop()), 'txt', md.split('Markdown Content:').pop().trim());
+      return openBook(b);
+    }
+    const r = await fetch(u); if (!r.ok) throw new Error('HTTP ' + r.status);
+    openBook(await addBook(decodeURIComponent(u.split('/').pop()), k, await r.arrayBuffer()));
+  } catch (e) { say('⚠ 못 받음: ' + e.message + (e.message.includes('fetch') ? ' (그 사이트가 다른 사이트에서 받는 걸 막음 — 폰에서 파일로 보내 주세요)' : '')); }
+}
+async function openBook(b) {
+  cur = b; say(''); $('lib').hidden = true; $('read').hidden = false; $('area').innerHTML = ''; $('next').focus();
+  const data = await idb('readonly', s => s.get(b.id));
+  if (data == null) { say('책 파일이 없습니다'); return close(); }
+  if (b.k === 'epub') {
+    rend = ePub(data).renderTo('area', { width: 572, height: 450, flow: 'paginated', spread: 'none' });
+    rend.themes.default({ body: { background: '#000 !important', color: '#fff !important' }, a: { color: '#8cc8ff !important' } });
+    rend.themes.fontSize(fs + 'px');
+    rend.on('relocated', l => { b.at = l.start.cfi; put('bk.list', books); $('pos').textContent = l.start.displayed ? `${l.start.displayed.page}/${l.start.displayed.total} (이 장)` : ''; });
+    rend.display(b.at || undefined);
+  } else if (b.k === 'pdf') {
+    pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(data) }).promise;
+    $('area').innerHTML = '<canvas id="pdf"></canvas>'; $('area').style.overflow = 'auto';
+    showPdf(b.at || 1);
+  } else {
+    const per = Math.round(260 * (26 / fs) ** 2); txtPages = [];
+    const text = String(data);
+    for (let i = 0; i < text.length;) { let j = Math.min(text.length, i + per); const k = text.lastIndexOf('\n', j); if (j < text.length && k > i + per / 2) j = k + 1; txtPages.push(text.slice(i, j)); i = j; }
+    $('area').innerHTML = '<div id="txt"></div>';
+    showTxt(Math.min(b.at || 0, txtPages.length - 1));
+  }
+}
+function showTxt(p) { cur.at = p; put('bk.list', books); $('txt').textContent = txtPages[p]; $('pos').textContent = `${p + 1}/${txtPages.length}`; }
+async function showPdf(p) {
+  p = Math.max(1, Math.min(p, pdfDoc.numPages)); cur.at = p; put('bk.list', books);
+  const page = await pdfDoc.getPage(p), v0 = page.getViewport({ scale: 1 }), v = page.getViewport({ scale: 572 / v0.width * (fs / 26) });
+  const c = $('pdf'); c.width = v.width; c.height = v.height;
+  if (pdfTask) pdfTask.cancel();   // 앞 쪽을 그리는 중에 넘기면 겹쳐 그려져 뒤집힘
+  pdfTask = page.render({ canvasContext: c.getContext('2d'), viewport: v });
+  try { await pdfTask.promise; } catch { return; }
+  $('pos').textContent = `${p}/${pdfDoc.numPages}`;
+}
+function turn(d) {
+  if (!cur) return;
+  if (cur.k === 'epub') d > 0 ? rend.next() : rend.prev();
+  else if (cur.k === 'pdf') showPdf(cur.at + d);
+  else showTxt(Math.max(0, Math.min(txtPages.length - 1, cur.at + d)));
+}
+function close() { if (rend) { try { rend.destroy(); } catch {} rend = null; } cur = null; $('area').style.overflow = 'hidden'; $('read').hidden = true; $('lib').hidden = false; drawLib(); const b = $('lib').querySelector('.b'); if (b) b.focus(); }
+function zoom(d) { fs = Math.max(16, Math.min(44, fs + d)); put('bk.fs', fs); if (!cur) return; if (cur.k === 'epub') rend.themes.fontSize(fs + 'px'); else if (cur.k === 'pdf') showPdf(cur.at); else { const b = cur, ratio = b.at / txtPages.length; openBook(b).then(() => showTxt(Math.round(ratio * (txtPages.length - 1)))); } }
+$('prev').onclick = () => turn(-1); $('next').onclick = () => turn(1); $('close').onclick = close;
+$('sm').onclick = () => zoom(-2); $('bg').onclick = () => zoom(2);
+addEventListener('keydown', e => { if (!$('read').hidden && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && ['prev', 'next'].includes(document.activeElement.id)) { e.preventDefault(); turn(e.key === 'ArrowLeft' ? -1 : 1); } }, true);
+$('f').onsubmit = e => { e.preventDefault(); const u = $('u').value.trim(); if (u) openUrl(/^https?:/.test(u) ? u : 'https://' + u); };
+$('lib').addEventListener('click', e => {
+  const u = e.target.closest('[data-u]'); if (u) return openUrl(u.dataset.u);
+  const i = e.target.closest('[data-i]'); if (i) return openBook(books[+i.dataset.i]);
+  const d = e.target.closest('[data-del]'); if (d) { const [b] = books.splice(+d.dataset.del, 1); put('bk.list', books); idb('readwrite', s => s.delete(b.id)); drawLib(); }
+});
+// 휴대폰에서 보낸 파일(같은 8자리 코드 채널의 첨부)
+const code = get('gb.code', null);
+if (code) {
+  const pe = new EventSource(RELAY + 'gb-' + code + '/sse');
+  pe.onmessage = async ev => {
+    const m = JSON.parse(ev.data); if (!m.attachment) return;
+    const a = m.attachment; say('📱 받는 중: ' + a.name);
+    try { const r = await fetch(a.url); if (!r.ok) throw new Error('HTTP ' + r.status); const k = kindOf(a.name, a.type);
+      const data = k === 'txt' ? await r.text() : await r.arrayBuffer();
+      await addBook(a.name, k, data); say('📱 책장에 넣음: ' + a.name);
+    } catch (e) { say('⚠ 파일 받기 실패: ' + e.message); }
+  };
+}
+drawLib();
+</script>
+</body>
+</html>
