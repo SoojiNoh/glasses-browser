@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>안경 자판</title>
+<style>
+  :root { --accent: #D97757; color-scheme: light dark; }
+  body { margin: 0; padding: 16px; font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; background: Canvas; color: CanvasText; }
+  h1 { font-size: 20px; color: var(--accent); margin: 0 0 12px; }
+  input, textarea { width: 100%; box-sizing: border-box; font-size: 20px; padding: 12px; border-radius: 12px; border: 2px solid #888; background: Field; color: FieldText; }
+  textarea { height: 120px; margin-top: 10px; }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  button { flex: 1; font-size: 18px; padding: 12px; border-radius: 12px; border: 0; background: var(--accent); color: #fff; cursor: pointer; }
+  button.sub { background: #666; }
+  #st { margin-top: 10px; min-height: 1.2em; color: #c8643f; }
+</style>
+</head>
+<body>
+<h1>⌨ 안경 자판</h1>
+<label>안경에 뜬 코드 8자리<input id="code" autocomplete="off" autocapitalize="off" placeholder="abcd efgh"></label>
+<textarea id="t" placeholder="여기에 치면 안경 검색칸에 바로 들어갑니다 (⌘Enter·보내기 = 열기)"></textarea>
+<div class="row"><button id="go">보내기</button></div>
+<div class="row"><button class="sub" id="back">← 뒤로</button><button class="sub" id="home">🏠 처음</button></div>
+<div id="st"></div>
+<script>
+const $ = id => document.getElementById(id);
+const st = t => $('st').textContent = t;
+try { $('code').value = location.hash.slice(1) || localStorage.getItem('gb.code') || ''; } catch {}
+const code = () => $('code').value.replace(/\s/g, '').toLowerCase();
+async function send(m) {
+  const c = code();
+  if (c.length !== 8) return st('코드 8자리를 먼저 넣으세요.');
+  try { localStorage.setItem('gb.code', c); } catch {}
+  try {
+    const r = await fetch('https://ntfy.sh/gb-' + c, { method: 'POST', body: JSON.stringify(m) });
+    if (!r.ok) throw new Error(r.status === 429 ? '너무 빨리 보냄 — 잠시 뒤' : 'HTTP ' + r.status);
+    st(m.t === 'text' ? '안경에 보냄' : '✓ 보냄');
+  } catch (e) { st('⚠ 보내기 실패: ' + e.message); }
+}
+let timer;
+$('t').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => send({ t: 'text', v: $('t').value }), 800); });
+$('t').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('go').click(); } });
+$('go').onclick = () => { clearTimeout(timer); send({ t: 'go', v: $('t').value }); };
+$('back').onclick = () => send({ t: 'back' });
+$('home').onclick = () => send({ t: 'home' });
+</script>
+</body>
+</html>
