@@ -128,6 +128,7 @@ async function show(state, push = true) {
   if (state.kind !== 'page' && state.kind !== 'search') return renderHome();
   try {
     if (state.kind === 'search') {
+      recent = [state.q, ...recent.filter(r => r !== state.q)].slice(0, 8); store.set('gb.recent', recent);
       view.innerHTML = `<h2>🔎 ${esc(state.q)}</h2>` + searchHtml(await fetchMd(SEARCH(state.q)));
     } else {
       const md = await fetchMd(state.u);
@@ -148,7 +149,7 @@ function renderHome() {
   view.innerHTML = `
     <label for="q">주소 또는 검색어</label>
     <form id="f"><input id="q" type="search" enterkeyhint="go" autocomplete="off"></form>
-    <div class="sites">${SITES.map(s => `<button data-u="${s[1]}">${s[0]}</button>`).join('')}</div>
+    <div class="sites">${recent.slice(0, 4).map(r => `<button data-q="${esc(r)}">🕘 ${esc(r)}</button>`).join('')}${SITES.map(s => `<button data-u="${s[1]}">${s[0]}</button>`).join('')}</div>
     <h2>즐겨찾기</h2>
     ${favs.length ? favs.map((f, i) => `<div class="row"><a class="res" href="#" data-u="${esc(f.u)}">${esc(f.t || f.u)}<small>${esc(f.u)}</small></a><button data-del="${i}" aria-label="지우기">✕</button></div>`).join('') : '<p>아직 없습니다. 페이지에서 ☆ 를 누르세요.</p>'}`;
   $('f').onsubmit = e => { e.preventDefault(); const v = $('q').value; if (v.trim()) show(toTarget(v)); };
@@ -158,6 +159,8 @@ function renderHome() {
 view.addEventListener('click', e => {
   const a = e.target.closest('[data-u]');
   if (a) { e.preventDefault(); return show({ kind: 'page', u: a.dataset.u }); }
+  const rq = e.target.closest('[data-q]');
+  if (rq) return show({ kind: 'search', q: rq.dataset.q });
   const d = e.target.closest('[data-del]');
   if (d) { favs.splice(+d.dataset.del, 1); store.set('gb.favs', favs); renderHome(); }
 });
@@ -178,19 +181,80 @@ addEventListener('popstate', e => show(e.state || { kind: 'home' }, false));
 // ── 안경 자판(영문·숫자). 한글은 📱 폰 자판으로. ──
 const SITES = [['네이버 뉴스', 'https://m.news.naver.com/'], ['위키백과', 'https://ko.m.wikipedia.org/'], ['나무위키', 'https://namu.wiki/']];
 const ROWS = ['1234567890', 'qwertyuiop', 'asdfghjkl-', 'zxcvbnm./'];
+// 천지인: 모음 3키(ㅣ ㆍ ㅡ) + 자음 묶음 키(같은 키 반복 = 다음 자음). → = 같은 키 자음을 새로 시작
+const KO = [['ㅣ', 'ㆍ', 'ㅡ', '⌫'], ['ㄱㅋ', 'ㄴㄹ', 'ㄷㅌ', ' '], ['ㅂㅍ', 'ㅅㅎ', 'ㅈㅊ', '→'], ['한/영', 'ㅇㅁ', '.', '⏎']];
+const GROUPS = { 'ㄱㅋ': 'ㄱㅋㄲ', 'ㄴㄹ': 'ㄴㄹ', 'ㄷㅌ': 'ㄷㅌㄸ', 'ㅂㅍ': 'ㅂㅍㅃ', 'ㅅㅎ': 'ㅅㅎㅆ', 'ㅈㅊ': 'ㅈㅊㅉ', 'ㅇㅁ': 'ㅇㅁ' };
+const VCOMB = { 'ㆍㆍ': 'ᆢ', 'ㅣㆍ': 'ㅏ', 'ㅏㆍ': 'ㅑ', 'ㆍㅣ': 'ㅓ', 'ᆢㅣ': 'ㅕ', 'ㆍㅡ': 'ㅗ', 'ᆢㅡ': 'ㅛ', 'ㅡㆍ': 'ㅜ', 'ㅜㆍ': 'ㅠ', 'ㅡㅣ': 'ㅢ',
+  'ㅏㅣ': 'ㅐ', 'ㅓㅣ': 'ㅔ', 'ㅑㅣ': 'ㅒ', 'ㅕㅣ': 'ㅖ', 'ㅗㅣ': 'ㅚ', 'ㅚㆍ': 'ㅘ', 'ㅘㅣ': 'ㅙ', 'ㅜㅣ': 'ㅟ', 'ㅠㅣ': 'ㅝ', 'ㅝㅣ': 'ㅞ' };
+const CHO = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ', JUNG = 'ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ';
+const JONG = ['', 'ㄱ', 'ㄲ', 'ㄳ', 'ㄴ', 'ㄵ', 'ㄶ', 'ㄷ', 'ㄹ', 'ㄺ', 'ㄻ', 'ㄼ', 'ㄽ', 'ㄾ', 'ㄿ', 'ㅀ', 'ㅁ', 'ㅂ', 'ㅄ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
+const JJ = { 'ㄱㅅ': 'ㄳ', 'ㄴㅈ': 'ㄵ', 'ㄴㅎ': 'ㄶ', 'ㄹㄱ': 'ㄺ', 'ㄹㅁ': 'ㄻ', 'ㄹㅂ': 'ㄼ', 'ㄹㅅ': 'ㄽ', 'ㄹㅌ': 'ㄾ', 'ㄹㅍ': 'ㄿ', 'ㄹㅎ': 'ㅀ', 'ㅂㅅ': 'ㅄ' };
+const isV = c => c && (JUNG.includes(c) || c === 'ㆍ' || c === 'ᆢ');
+const isC = c => c && CHO.includes(c);
+function compose(js) {           // 자모 목록 → 완성형 한글
+  js = js.filter(Boolean); let out = '';
+  for (let i = 0; i < js.length;) {
+    const c = js[i], v = js[i + 1];
+    if (isC(c) && v && JUNG.includes(v)) {
+      let jong = '', n = 2; const a = js[i + 2], b = js[i + 3];
+      if (isC(a) && !isV(b)) {
+        if (isC(b) && JJ[a + b] && !isV(js[i + 4])) { jong = JJ[a + b]; n = 4; }
+        else if (JONG.includes(a)) { jong = a; n = 3; }
+      }
+      out += String.fromCharCode(0xAC00 + (CHO.indexOf(c) * 21 + JUNG.indexOf(v)) * 28 + JONG.indexOf(jong));
+      i += n;
+    } else { out += c; i++; }
+  }
+  return out;
+}
 const pad = $('pad');
+let mode = 'ko', base = '', jamo = [], undo = [];
 function q() { if (!$('q')) show({ kind: 'home' }); return $('q'); }
-pad.innerHTML = ROWS.map(r => `<div class="k">${[...r].map(c => `<button data-k="${c}">${c}</button>`).join('')}</div>`).join('') +
-  `<div class="k"><button data-k="⌫">⌫</button><button data-k=" " style="flex:3">띄우기</button><button data-k=".com">.com</button><button data-k="⏎">확인</button></div>`;
+function drawPad() {
+  const rows = mode === 'ko' ? KO : [...ROWS.map(r => [...r]), ['한/영', ' ', '.com', '⌫', '⏎']];
+  const label = k => ({ ' ': '띄우기', '→': '다음→', '⏎': '확인' }[k] || k);
+  pad.innerHTML = rows.map(r => `<div class="k">${r.map(c => `<button data-k="${c}">${label(c)}</button>`).join('')}</div>`).join('') + '<div id="sug"></div>';
+}
+function commit() { base += compose(jamo); jamo = []; undo = []; }
+function render() { const el = q(); el.value = base + compose(jamo); say('입력: ' + el.value); suggest(el.value); }
+function keyKo(k) {
+  undo.push(jamo.slice());
+  const last = jamo[jamo.length - 1];
+  if ('ㅣㆍㅡ'.includes(k)) {
+    const c = isV(last) && VCOMB[last + k];
+    if (c) jamo[jamo.length - 1] = c; else jamo.push(k);
+  } else if (GROUPS[k]) {
+    const g = GROUPS[k], at = last ? g.indexOf(last) : -1;
+    if (at >= 0) jamo[jamo.length - 1] = g[(at + 1) % g.length]; else jamo.push(g[0]);
+  } else if (k === '→') jamo.push(null);
+}
 pad.addEventListener('click', e => {
   const k = e.target.dataset.k; if (k == null) return;
   const el = q();
-  if (k === '⌫') el.value = el.value.slice(0, -1);
-  else if (k === '⏎') { pad.hidden = true; if (el.value.trim()) show(toTarget(el.value)); }
-  else el.value += k;
-  say('입력: ' + el.value);
+  if (e.target.dataset.s != null) { pad.hidden = true; return show(toTarget(e.target.dataset.s)); }
+  if (k === '⌫') { if (jamo.length) jamo = undo.pop() || jamo.slice(0, -1); else base = base.slice(0, -1); }
+  else if (k === '⏎') { commit(); pad.hidden = true; if (el.value.trim()) show(toTarget(el.value)); return; }
+  else if (k === '한/영') { commit(); mode = mode === 'ko' ? 'en' : 'ko'; drawPad(); pad.querySelector('button').focus(); }
+  else if (mode === 'ko' && k !== ' ' && k !== '.') keyKo(k);
+  else { commit(); base += k; }
+  render();
 });
-$('kb').onclick = () => { pad.hidden = !pad.hidden; if (!pad.hidden) { q(); pad.querySelector('button').focus(); } };
+// 검색어 후보: 최근 검색 + 한국어 위키백과 제목(무료·키 없음)
+let recent = store.get('gb.recent', []), sugT;
+function suggest(t) {
+  clearTimeout(sugT);
+  const box = $('sug'); if (!box || !t.trim()) { if (box) box.innerHTML = ''; return; }
+  sugT = setTimeout(async () => {
+    let list = recent.filter(r => r.includes(t));
+    try {
+      const r = await fetch('https://ko.wikipedia.org/w/api.php?action=opensearch&limit=5&origin=*&search=' + encodeURIComponent(t));
+      list = list.concat((await r.json())[1]);
+    } catch {}
+    list = [...new Set(list)].slice(0, 5);
+    box.innerHTML = list.map(s => `<button class="res" data-k="" data-s="${esc(s)}">🔎 ${esc(s)}</button>`).join('');
+  }, 350);
+}
+$('kb').onclick = () => { pad.hidden = !pad.hidden; if (!pad.hidden) { base = q().value; jamo = []; drawPad(); pad.querySelector('button').focus(); } };
 
 // ── 📱 폰 자판 연결: ntfy.sh 공개 중계(무료·키 없음). 주제 이름 = 8자리 비밀 코드 ──
 // ponytail: 코드를 아는 사람은 글을 넣을 수 있음(읽기만 해당 화면). 더 막으려면 메시지 서명 추가.
