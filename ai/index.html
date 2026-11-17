@@ -58,9 +58,9 @@ async function init() {
     try {
       const [iv, ct] = m.slice(2).split('.');
       const r = JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv) }, key, unb64(ct))));
-      if (r.id !== waiting) return;
-      waiting = null; hist.push({ r: 'a', t: r.a }); hist = hist.slice(-6); put('ai.hist', hist);
-      showAnswer(r.a); say('');
+      if (r.id !== waiting && !r.voice) return;
+      waiting = null; if (r.voice && r.q) hist.push({ r: 'q', t: r.q }); hist.push({ r: 'a', t: r.a }); hist = hist.slice(-6); put('ai.hist', hist);
+      showAnswer((r.voice ? '🎙 ' + (r.q || '(못 알아들음)') + '\n\n' : '') + r.a); say('');
     } catch { /* 다른 키의 글은 무시 */ }
   };
 }

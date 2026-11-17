@@ -23,6 +23,7 @@
 <div class="row"><button id="go">보내기</button></div>
 <div class="row"><button class="sub" id="back">← 뒤로</button><button class="sub" id="home">🏠 처음</button></div>
 <div class="row"><label style="flex:1">📚 책 파일 보내기 (ePub·PDF·TXT, 15MB까지)<input id="file" type="file" accept=".epub,.pdf,.txt"></label></div>
+<div class="row"><button id="rec" style="background:#c33">🎙 녹음해서 Claude에게 묻기</button></div>
 <div id="st"></div>
 <script>
 const $ = id => document.getElementById(id);
@@ -33,6 +34,36 @@ const gas = location.hash.startsWith('#gas=') ? location.hash.slice(5) : '';
 if (gas) { $('go').insertAdjacentHTML('afterend', '<button id="sendgas" style="margin-left:8px">📁 드라이브 설정 보내기</button>'); $('sendgas').onclick = () => send({ t: 'gas', v: decodeURIComponent(gas) }); history.replaceState(null, '', location.pathname); if (!$('code').value) try { $('code').value = localStorage.getItem('gb.code') || ''; } catch {} }
 const ytgas = location.hash.startsWith('#ytgas=') ? location.hash.slice(7) : '';
 if (ytgas) { $('go').insertAdjacentHTML('afterend', '<button id="sendyt" style="margin-left:8px">📺 유튜브 계정 설정 보내기</button>'); $('sendyt').onclick = () => send({ t: 'ytgas', v: decodeURIComponent(ytgas) }); history.replaceState(null, '', location.pathname); }
+if (aikey) { try { localStorage.setItem('ai.pair', aikey); } catch {} }
+// 🎙 녹음 → 암호화 → ntfy 첨부 → 중계 PC(받아쓰기 + Claude) → 안경 AI 화면
+const b64u = b => btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+let rec = null, chunks = [];
+$('rec').onclick = async () => {
+  if (rec) { rec.stop(); return; }
+  let pair = ''; try { pair = localStorage.getItem('ai.pair') || ''; } catch {}
+  if (!pair.includes('.')) return st('🔑 먼저 중계 프로그램이 알려 준 「AI 키」 링크를 이 폰에서 한 번 여세요.');
+  let stream; try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { return st('⚠ 마이크 허용이 필요합니다: ' + e.message); }
+  chunks = []; rec = new MediaRecorder(stream);
+  rec.ondataavailable = e => chunks.push(e.data);
+  rec.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    const mime = rec.mimeType || 'audio/webm'; rec = null; $('rec').textContent = '🎙 녹음해서 Claude에게 묻기';
+    try {
+      const [topic, k] = pair.split('.');
+      const key = await crypto.subtle.importKey('raw', unb64u(k), 'AES-GCM', false, ['encrypt']);
+      const aiv = crypto.getRandomValues(new Uint8Array(12)), iv = crypto.getRandomValues(new Uint8Array(12));
+      const audio = await new Blob(chunks).arrayBuffer();
+      const body = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: aiv }, key, audio);
+      const meta = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify({ id: 'v' + Date.now().toString(36), model: 'claude', mime, aiv: b64u(aiv) })));
+      st('보내는 중… ' + Math.round(audio.byteLength / 1024) + 'KB');
+      const r = await fetch('https://ntfy.sh/' + topic, { method: 'PUT', headers: { Filename: 'v.bin', Message: 'V:' + b64u(iv) + '.' + b64u(new Uint8Array(meta)) }, body });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      st('✓ 보냄 — 안경 AI 화면에 답이 뜹니다(받아쓰기+답 20~40초)');
+    } catch (e) { st('⚠ 보내기 실패: ' + e.message); }
+  };
+  rec.start(); $('rec').textContent = '⏹ 녹음 끝내고 보내기'; st('🎙 녹음 중… 다 말하면 다시 누르세요');
+};
 if (aikey) { $('go').insertAdjacentHTML('afterend', '<button id="sendkey" style="margin-left:8px">🔑 AI 키 보내기</button>'); $('sendkey').onclick = () => send({ t: 'aikey', v: aikey }); history.replaceState(null, '', location.pathname); }
 const code = () => $('code').value.replace(/[\s"]/g, '').toLowerCase();
 async function send(m) {
