@@ -23,7 +23,8 @@
 <body>
 <div class="row"><button id="claude">Claude</button><button id="gpt">GPT</button><button id="new">새 대화</button></div>
 <div id="warn">학생 이름·성적 같은 개인정보는 보내지 마세요.</div>
-<textarea id="q" placeholder="질문 (손글씨·받아쓰기, 또는 폰 자판)"></textarea>
+<label for="q" style="font-size:18px;color:#ffb36b">🎙 말하기 · ✍️ 손글씨 — 이 칸을 고르면 입력창이 열립니다</label>
+<textarea id="q" placeholder="여기를 고르세요 (받아쓰기·손글씨·폰 자판)"></textarea>
 <div class="row"><button id="send" style="flex:1">보내기</button></div>
 <div id="msg" role="status"></div>
 <div id="pos"></div>
@@ -100,7 +101,7 @@ if (code) {
     else if (m.t === 'go') { $('q').value = m.v; send(); }
   };
 }
-setModel(model); init();
+setModel(model); init(); $("q").focus();  // 첫 선택 = 질문칸(시스템 받아쓰기·손글씨 입력창)
 </script>
 </body>
 </html>
